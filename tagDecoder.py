@@ -1,8 +1,8 @@
-from IqDataReader import IqDataReader as IQreader
 from os import listdir
 from multiprocessing import Process as Proc
 from multiprocessing import Queue
 import numpy as np
+import csv
 from numpy.random import normal
 
 class tagDecoder:
@@ -14,51 +14,87 @@ class tagDecoder:
         self.preambleMask = [1,1,-1,1,-1,-1,1,-1,-1,-1,1,1]
         self.oneMask = [-1,1,1,-1]
         self.zeroMask = [-1,1,-1,1]
-        self.minT1 = int(0.0001 * sampleRate)
-        self.preambleRange = int(self.minT1/2)
+        self.minT1 = int(250e-6 * sampleRate)
+        self.preambleRange = int((self.minT1*0.04 + 2e-6*self.sampleRate)*2)
         self.shiftingLog = []
+        self.tagAmp = complex(0.0, 0.0)
 
-    def getMaskedValue(self, samples, cur_index, mask, prev_value = complex(0.0,0.0)):
+    def getMaskedValue(self, samples, cur_index, mask, prev_value = None):
         halfBitSamples = self.samplePerBit/2
-        cur_value = prev_value
+        # if prev_value != None:
+        #     cur_value = prev_value
+        # else:
+        #     cur_value = complex(0.0, 0.0)
+        cur_value = complex(0.0, 0.0)
+
+        endIdx = cur_index
+
         for idx_m in range(len(mask)):
-            startIdx = int(cur_index + idx_m * halfBitSamples)
+            #startIdx = int(cur_index + idx_m * halfBitSamples)
+            startIdx = endIdx
             endIdx = int(startIdx + halfBitSamples)
 
-            if prev_value == complex(0.0,0.0):
-                for sample in samples[startIdx: endIdx]:
-                    cur_value += mask[idx_m] * sample
-            else:
-                cur_value += (mask[idx_m]*samples[endIdx - 1] - mask[idx_m]*samples[startIdx - 1])
-
+            for sample in samples[startIdx:endIdx]:
+                cur_value += (mask[idx_m] * sample)
+            # if prev_value == None:
+            #     for sample in samples[startIdx: endIdx]:
+            #         cur_value += mask[idx_m] * sample
+            # else:
+            #     cur_value += (mask[idx_m]*samples[endIdx - 1] - mask[idx_m]*samples[startIdx - 1])
         return cur_value
 
+    def getNoiseStd(self) -> complex:
+        T1_samples = np.array(self.samples[0:int((self.minT1*0.9)*0.9)])
+        noise_std = complex(np.std(T1_samples.real), np.std(T1_samples.imag))
+
+        return noise_std
+
+    def getAmpAvg(self) -> complex:
+        T1_samples = np.array(self.samples[0:int(self.minT1*0.9/2)])
+        amp_avg = np.mean(T1_samples)
+
+        return amp_avg
+
+    def getTagCorr(self) -> complex:
+        start_idx, preambleAmp = self.findPreamble()
+        tag_signal_len = len(self.preambleMask)*(self.samplePerBit/2)
+        # tag_signal_len = int(((len(self.preambleMask)/2 + 16)*self.samplePerBit)*1.04)
+        # end_idx = start_idx+tag_signal_len
+        # amp_avg = self.getAmpAvg()
+
+        # self.tagAmp = np.mean(np.array(self.samples[start_idx:end_idx])-amp_avg)
+
+        self.tagAmp = preambleAmp
+        return self.tagAmp / tag_signal_len
 
     def findPreamble(self):
-        maskValue = complex(0.0,0.0)
+        maskValue = None
         bestIdx = 0
         bestValue = 0.0
 
+        T1_duration_with_minimum_tolerance = int((self.minT1*0.9) - (self.minT1*0.04) - (2e-6*self.sampleRate))
+
         for i in range(self.preambleRange):
-            maskValue = self.getMaskedValue(self.samples, i + self.minT1, self.preambleMask, maskValue)
+            maskValue = self.getMaskedValue(self.samples, i + T1_duration_with_minimum_tolerance, self.preambleMask, maskValue)
 
-            if bestValue < abs(maskValue):
+            if abs(bestValue) < abs(maskValue):
                 bestIdx = i
-                bestValue = abs(maskValue)
+                bestValue = maskValue
 
-        return bestIdx + self.minT1
-
+        return bestIdx + T1_duration_with_minimum_tolerance, bestValue
 
     def decode(self, expectedBit):
         shift_size = int(self.samplePerBit/4)
-        cur_center = self.findPreamble() + (len(self.preambleMask)-1)*self.samplePerBit/2
+        start_idx, self.tagAmp = self.findPreamble()
+        cur_center = start_idx + (len(self.preambleMask)-1)*self.samplePerBit/2
+        
         bits = []
 
         for bit_idx in range(expectedBit):
             bestShift = -shift_size
             bestValue = 0.0
-            cur_value_0 = complex(0.0, 0.0)
-            cur_value_1 = complex(0.0, 0.0)
+            cur_value_0 = None
+            cur_value_1 = None
             cur_bit = 0
 
             for shift in range(-shift_size, shift_size+1):
@@ -97,83 +133,110 @@ def gaussianNoiseAdder(samples, noiseStd):
     return noiseAddedSample.tolist()
 
 
-def testProc(samples, subSampleRate, q, expectedData=21845):
-    returnVal = 0.0
-    for i in range(subSampleRate):
-        subStream = subSampling(samples, subSampleRate, i)
-        decoder = tagDecoder(subStream, 2e6/subSampleRate, 40e3)
+def testProc(filepath_list : list, q, dataPath : str, sub_sample_rate=1):
+    sub_result = []
+    for filepath in filepath_list:
+        gateFilePath = dataPath + "/" + filepath
+        reader = IQreader(gateFilePath)
+        if reader.eof() or reader.getTotalSize()<=0.0:
+            continue
+        else:
+            stream = reader.read()
 
-        bits = decoder.decode(16)
-        data = 0
+            for shift in range(sub_sample_rate):
+                subStream = subSampling(stream, sub_sample_rate, shift)
 
-        for bit in bits:
-            data *= 2
-            data += bit
+                decoder = tagDecoder(subStream, 400e3, 40e3)
 
-        if expectedData == data:
-            returnVal += 1
-    returnVal /= subSampleRate
+                tag_corr = decoder.getTagCorr()
 
-    q.put([subSampleRate, returnVal])
+                noise_signal = decoder.getNoiseStd()
+
+                sub_result.append([filepath, shift, tag_corr, noise_signal])#, start_idx])
+    q.put(sub_result)
+
+import glob
+
+def process_gate_data(gatePath : str, sub_sample_rate=1):
+    file_list = listdir(gatePath)
+
+    rn16_file_list = [file for file in file_list if not (file.endswith("_EPC") or file.startswith("fail"))]
+
+    result = []
+    
+    q = Queue()
+
+    num_worker = 64
+            
+    divided_list = list(np.array_split(rn16_file_list, num_worker))
+    decodeProc = []
+
+    for i in range(num_worker):
+        p = Proc(target=testProc, args=(divided_list[i], q, gatePath, sub_sample_rate))
+        decodeProc.append(p)
+
+    for p in decodeProc:
+        p.start()
+
+    for i in range(num_worker):
+        result += q.get()
+
+    for p in decodeProc:
+        p.join()
+
+    result_dict = {}
+
+    for result_data in result:
+        result_dict[int(result_data[0])] = result_data[1:]
+
+    return result_dict
 
 
+from complex_reader.IqDataReader import IqDataReader as IQreader
+import sys
 
 def main():
-    dataPath = "./data/"
+    dataPath = sys.argv[1]
     dir_list = listdir(dataPath)
 
+    # extract only gate dir
+    gate_dir_list = [dir for dir in dir_list if dir.endswith("gate")]
 
-    resultDict = {}
-    iteration_step = 10
-    print("dir name, fileNumber, Added Noise, 1, 2, 3, 4, 5, 6, 8, 12, 25")
+    for gate_dir_name in gate_dir_list:
+        print(gate_dir_name)
 
-    for dir_name in dir_list:
-        file_list = listdir(dataPath + dir_name + "/")
-        for gateFile in file_list:
-            gateFilePath = dataPath + dir_name + "/" + gateFile
-            q = Queue()
-            subSampleStep = [1, 2, 3, 4, 5, 6, 8, 12, 25]
+        file_list = listdir(dataPath +"/" + gate_dir_name + "/")
 
+        rn16_file_list = [file for file in file_list if not (file.endswith("_EPC") or file.startswith("fail"))]
+        #print(rn16_file_list)
 
-            reader = IQreader(gateFilePath)
-            if reader.eof():
-                continue
-            else:
-                stream = reader.read(1750)
-
-            
-            for noiseStep in range(10, 40, 5):
-                decodeSuccessDict = {}
-
-                for sub in subSampleStep:
-                    decodeSuccessDict[sub] = 0.0
-
-                for i in range(iteration_step):
-                    noise = noiseStep * 0.00001
-                    noisyStream = gaussianNoiseAdder(stream, noise)
-
-                    decodeProc = []
-
-
-                    for subSampleRate in subSampleStep:
-                        p = Proc(target=testProc, args=(noisyStream, subSampleRate, q))
-                        decodeProc.append(p)
-
-                    for p in decodeProc:
-                        p.start()
-
-                    for p in decodeProc:
-                        p.join()
-                        result = q.get()
-                        decodeSuccessDict[result[0]] += result[1]
-
-                for sub in subSampleStep:
-                    decodeSuccessDict[sub] /= iteration_step
-
-                print(dir_name, ", ", gateFile,", ", noiseStep,", ", decodeSuccessDict[1],", ", decodeSuccessDict[2],", ", decodeSuccessDict[3],", ", decodeSuccessDict[4],", ", decodeSuccessDict[5],", ", decodeSuccessDict[6],", ", decodeSuccessDict[8],", ", decodeSuccessDict[12],", ", decodeSuccessDict[25])
-
-
+        result = []
         
+        q = Queue()
+
+        num_worker = 64
+               
+        divided_list = list(np.array_split(rn16_file_list, num_worker))
+        decodeProc = []
+
+        for i in range(num_worker):
+            p = Proc(target=testProc, args=(divided_list[i], q, dataPath+'/'+gate_dir_name))
+            decodeProc.append(p)
+
+        for p in decodeProc:
+            p.start()
+
+        for i in range(num_worker):
+            result += q.get()
+
+        for p in decodeProc:
+            p.join()
+
+        with open("result/"+gate_dir_name+".csv", "w") as result_file:
+            csv_writer = csv.writer(result_file)
+            csv_writer.writerows(result)
+
+    return          
 
 
 if __name__ == "__main__":

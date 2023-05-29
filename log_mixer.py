@@ -14,16 +14,18 @@ class parsed_data:
         self.rn16 = 0
         self.round = 0
         self.set_number = 0
-        self.filename = ""
+        self.filename = []
         self.sub_sampling_shift = 0
 
     def to_list(self):
         result_list = []
         result_list += self.phase
-        result_list.append(self.filename)
-        result_list.append(0)
-        result_list.append(0)
-        result_list.append(0)
+        for i in range(len(self.filename)):
+            result_list.append(self.filename[i])
+        
+        for i in range(4 - len(self.filename)):
+            result_list.append(0)
+
         result_list.append(self.round)
         result_list += [self.noise.real, self.noise.imag]
         result_list += [self.tag_corr.real, self.tag_corr.imag]
@@ -67,11 +69,13 @@ def log_file_reader(filename) -> List[parsed_data]:
     return datas
 
 
-def prefix_parser(file_addr: str):
-    filename = file_addr.split('/')[-1]
-    prefix = filename.replace('_log.csv', '')
+def prefix_parser(file_addr: str) -> str:
+    filename = file_addr.split('/')[-4:]
+    prefix = filename[-1].replace('_log', '')
     prefix = prefix.replace('_gate', '')
-    return prefix
+    prefix = prefix.replace('.csv', '')
+    filename[-1] = prefix
+    return filename
 
 def gate2log_path(file_path: str):
     return file_path.replace('gate', 'log.csv')
@@ -114,22 +118,38 @@ def __main__():
             print(prefix_parser(gate_dir))
             log_path = gate2log_path(gate_dir)
             
-            gate_data = tagDecoder.process_gate_data(gate_dir)
+            gate_data = tagDecoder.process_gate_data(gate_dir, 5, 2e6)
 
-            log_data = log_file_reader(log_path)
+            log_data_list = log_file_reader(log_path)
 
-            for i in range(len(log_data)):
-                shift, corr, noise = gate_data[log_data[i].round]
-                log_data[i].tag_corr = corr
-                log_data[i].noise = noise
-                log_data[i].sub_sampling_shift = shift
-                log_data[i].filename = prefix_parser(gate_dir)
+            log_data_dict : Dict[int, parsed_data] = {data.round : data for data in log_data_list}
 
-            for data in log_data:
-                if data.rn16 != -1:
-                    result_list.append(data.to_list())
-                    if data.rn16 == 21845:
-                        accurate_list.append(data.to_list())
+            for round, shift in gate_data:
+                corr, noise, rn16 = gate_data[(round, shift)]
+                if rn16 != -1 and round in log_data_dict:
+                    log_data = log_data_dict[round]
+                    log_data.tag_corr = corr
+                    log_data.noise = noise
+                    log_data.sub_sampling_shift = shift
+                    log_data.filename = prefix_parser(gate_dir)
+                    log_data.rn16 = rn16
+
+                    result_list.append(log_data.to_list())
+
+            gate_data = tagDecoder.process_gate_data(gate_dir, 1, 2e6)
+
+            for round, shift in gate_data:
+                corr, noise, rn16 = gate_data[(round, shift)]
+                if rn16 == 21845 and round in log_data_dict:
+                    log_data = log_data_dict[round]
+                    log_data.tag_corr = corr
+                    log_data.noise = noise
+                    log_data.sub_sampling_shift = shift
+                    log_data.filename = prefix_parser(gate_dir)
+                    log_data.rn16 = rn16
+
+                    accurate_list.append(log_data.to_list())
+
 
     first_row = ["phase1", "phase2", "phase3", "phase4", "phase5", "phase6", "key1", "key2", "key3", "key4", "round", "noise real", "noise imag", "corr real", "corr imag"]
 

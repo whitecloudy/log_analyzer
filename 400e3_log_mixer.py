@@ -125,7 +125,7 @@ def __main__():
             print(prefix_parser(gate_dir))
             log_path = gate2log_path(gate_dir)
             
-            gate_data = tagDecoder.process_gate_data(gate_dir, 5, 2e6)
+            gate_data = tagDecoder.process_gate_data(gate_dir, 1, 400e3)
 
             log_data_list = log_file_reader(log_path)
 
@@ -133,29 +133,34 @@ def __main__():
 
             for round, shift in gate_data:
                 corr, noise, rn16 = gate_data[(round, shift)]
-                if rn16 != -1 and round in log_data_dict:
+                if round in log_data_dict:
                     log_data = log_data_dict[round]
-                    log_data.tag_corr = corr
-                    log_data.noise = noise
-                    log_data.sub_sampling_shift = shift
-                    log_data.filename = prefix_parser(gate_dir)
-                    log_data.rn16 = rn16
+                    if log_data.rn16 != -1:
+                        log_data.tag_corr = corr
+                        log_data.noise = noise
+                        log_data.sub_sampling_shift = shift
+                        log_data.filename = prefix_parser(gate_dir)
+                        # log_data.rn16 = rn16
 
-                    result_list.append(log_data.to_list())
+                        result_list.append(log_data.to_list())
+                        
+                        if log_data.rn16 == 21845:
+                            accurate_list.append(log_data.to_list())
 
-            gate_data = tagDecoder.process_gate_data(gate_dir, 1, 2e6)
+            # gate_data = tagDecoder.process_gate_data(gate_dir, 1, 2e6)
 
-            for round, shift in gate_data:
-                corr, noise, rn16 = gate_data[(round, shift)]
-                if rn16 == 21845 and round in log_data_dict:
-                    log_data = log_data_dict[round]
-                    log_data.tag_corr = corr
-                    log_data.noise = noise
-                    log_data.sub_sampling_shift = shift
-                    log_data.filename = prefix_parser(gate_dir)
-                    log_data.rn16 = rn16
+            # for round, shift in gate_data:
+            #     corr, noise, rn16 = gate_data[(round, shift)]
+            #     if rn16 == 21845 and round in log_data_dict:
+            #         log_data = log_data_dict[round]
+            #         log_data.tag_corr = corr
+            #         log_data.noise = noise
+            #         log_data.sub_sampling_shift = shift
+            #         log_data.filename = prefix_parser(gate_dir)
+            #         log_data.rn16 = rn16
 
-                    accurate_list.append(log_data.to_list())
+            #         accurate_list.append(log_data.to_list())
+
 
     first_row = ["phase1", "phase2", "phase3", "phase4", "phase5", "phase6", "key1", "key2", "key3", "key4", "round", "noise real", "noise imag", "corr real", "corr imag"]
 

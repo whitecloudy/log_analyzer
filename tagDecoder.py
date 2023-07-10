@@ -20,7 +20,7 @@ class tagDecoder:
         self.shiftingLog = []
         self.tagAmp = complex(0.0, 0.0)
 
-        self.minT1_ratio = 0.5 # with 210805 use 0.5. Otherwise use 0.9
+        self.minT1_ratio = 0.9 # with 210805 use 0.5. Otherwise use 0.9
 
     def getMaskedValue(self, samples, cur_index, mask, prev_value = None):
         halfBitSamples = int(self.samplePerBit/2)
@@ -134,13 +134,21 @@ def subSampling(samples, subSampleRate, shift):
 
 
 def gaussianNoiseAdder(samples, noiseStd):
-    noiseVal = normal(0, noiseStd, (len(samples),2)).view(np.complex128).reshape(len(samples),)
+    if np.iscomplex(noiseStd):
+        noiseVal_real = normal(0, noiseStd.real, len(samples))
+        noiseVal_imag = normal(0, noiseStd.imag, len(samples))
+    else:
+        noiseVal_real = normal(0, noiseStd, len(samples))
+        noiseVal_imag = normal(0, noiseStd, len(samples))
+    
+    noiseVal = (noiseVal_real + noiseVal_imag*1j).view(np.complex128).reshape(len(samples),)
     noiseAddedSample = np.array(samples) + noiseVal
 
     return noiseAddedSample.tolist()
 
+from random import random
 
-def testProc(filepath_list : list, q, dataPath : str, sub_sample_ratio=1, sampling_rate=400e3):
+def testProc(filepath_list : list, q, dataPath : str, sub_sample_ratio=1, sampling_rate=400e3, noise_coef=None):
     sub_result = []
     for filepath in filepath_list:
         gateFilePath = dataPath + "/" + filepath
@@ -152,6 +160,10 @@ def testProc(filepath_list : list, q, dataPath : str, sub_sample_ratio=1, sampli
 
             for shift in range(sub_sample_ratio):
                 subStream = subSampling(stream, sub_sample_ratio, shift)
+
+                if noise_coef != None:
+                    noise = complex(noise_coef*random(), noise_coef*random())
+                    subStream = gaussianNoiseAdder(subStream, noise)
 
                 decoder = tagDecoder(subStream, sampling_rate/sub_sample_ratio, 40e3)
 
@@ -174,7 +186,7 @@ def testProc(filepath_list : list, q, dataPath : str, sub_sample_ratio=1, sampli
 import glob
 from typing import Dict, List, Tuple
 
-def process_gate_data(gatePath : str, sub_sample_rate=1, sampling_rate=400e3) -> Dict[Tuple[int, int], Tuple[complex, complex, int]]:
+def process_gate_data(gatePath : str, sub_sample_rate=1, sampling_rate=400e3, noise_coef=None) -> Dict[Tuple[int, int], Tuple[complex, complex, int]]:
     file_list = listdir(gatePath)
 
     rn16_file_list = [file for file in file_list if not (file.endswith("_EPC") or file.startswith("fail"))]
@@ -183,13 +195,13 @@ def process_gate_data(gatePath : str, sub_sample_rate=1, sampling_rate=400e3) ->
     
     q = Queue()
 
-    num_worker = 64
+    num_worker = 32
             
     divided_list = list(np.array_split(rn16_file_list, num_worker))
     decodeProc = []
 
     for i in range(num_worker):
-        p = Proc(target=testProc, args=(divided_list[i], q, gatePath, sub_sample_rate, sampling_rate))
+        p = Proc(target=testProc, args=(divided_list[i], q, gatePath, sub_sample_rate, sampling_rate, noise_coef))
         decodeProc.append(p)
 
     for p in decodeProc:

@@ -113,10 +113,17 @@ def find_gate_dir(dataPath : list):
 
 def __main__():
     result_filename = "result/"+sys.argv[1]
-    dataPath_l = sys.argv[2:]
+    noise_coef = float(sys.argv[2])
+    dataPath_l = sys.argv[3:]
+
+    if noise_coef == 0.0:
+        noise_coef = None
 
     result_list = []
     accurate_list = []
+
+    noise_sum = complex(0.0, 0.0)
+    count = 0
 
     for dataPath in dataPath_l:
         gate_dir_list = find_gate_dir(dataPath)
@@ -125,7 +132,7 @@ def __main__():
             print(prefix_parser(gate_dir))
             log_path = gate2log_path(gate_dir)
             
-            gate_data = tagDecoder.process_gate_data(gate_dir, 1, 400e3)
+            gate_data = tagDecoder.process_gate_data(gate_dir, 1, 400e3, noise_coef)
 
             log_data_list = log_file_reader(log_path)
 
@@ -143,23 +150,20 @@ def __main__():
                         # log_data.rn16 = rn16
 
                         result_list.append(log_data.to_list())
-                        
-                        if log_data.rn16 == 21845:
-                            accurate_list.append(log_data.to_list())
 
-            # gate_data = tagDecoder.process_gate_data(gate_dir, 1, 2e6)
+            gate_data = tagDecoder.process_gate_data(gate_dir, 1, 400e3)
 
-            # for round, shift in gate_data:
-            #     corr, noise, rn16 = gate_data[(round, shift)]
-            #     if rn16 == 21845 and round in log_data_dict:
-            #         log_data = log_data_dict[round]
-            #         log_data.tag_corr = corr
-            #         log_data.noise = noise
-            #         log_data.sub_sampling_shift = shift
-            #         log_data.filename = prefix_parser(gate_dir)
-            #         log_data.rn16 = rn16
+            for round, shift in gate_data:
+                corr, noise, rn16 = gate_data[(round, shift)]
+                if rn16 == 21845 and round in log_data_dict:
+                    log_data = log_data_dict[round]
+                    log_data.tag_corr = corr
+                    log_data.noise = noise
+                    log_data.sub_sampling_shift = shift
+                    log_data.filename = prefix_parser(gate_dir)
+                    log_data.rn16 = rn16
 
-            #         accurate_list.append(log_data.to_list())
+                    accurate_list.append(log_data.to_list())
 
 
     first_row = ["phase1", "phase2", "phase3", "phase4", "phase5", "phase6", "key1", "key2", "key3", "key4", "round", "noise real", "noise imag", "corr real", "corr imag"]
@@ -173,12 +177,6 @@ def __main__():
         log_writer = csv.writer(log_file)
         log_writer.writerow(first_row)
         log_writer.writerows(result_list)
-
-
-            
-
-            
-
 
 if __name__=="__main__":
     __main__()

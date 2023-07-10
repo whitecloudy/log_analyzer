@@ -113,7 +113,11 @@ def find_gate_dir(dataPath : list):
 
 def __main__():
     result_filename = "result/"+sys.argv[1]
-    dataPath_l = sys.argv[2:]
+    noise_coef = float(sys.argv[2])
+    dataPath_l = sys.argv[3:]
+
+    if noise_coef == 0.0:
+        noise_coef = None
 
     result_list = []
     accurate_list = []
@@ -125,7 +129,7 @@ def __main__():
             print(prefix_parser(gate_dir))
             log_path = gate2log_path(gate_dir)
             
-            gate_data = tagDecoder.process_gate_data(gate_dir, 5, 2e6)
+            gate_data = tagDecoder.process_gate_data(gate_dir, 5, 2e6, noise_coef)
 
             log_data_list = log_file_reader(log_path)
 
